@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 
 #
-# Written by nixawk based on auxiliary/scanner/smb/smb_ms17_010 Metasploit module
+# Written by nixawk based on auxiliary/scanner/smb/smb_ms17_010 Metasploit module 
 #
 
 """
-$ python2.7 smb_exploit.py 192.168.206.152
+$ python2.7 smb_exploit.py 192.168.206.1/24
 [+] [192.168.206.152] is likely VULNERABLE to MS17-010! (Windows 7 Ultimate 7600)
 
-$ python2.7 smb_exploit.py 192.168.206.130
+$ python2.7 smb_exploit.py 192.168.206.1/24
 [+] [192.168.206.130] is likely VULNERABLE to MS17-010! (Windows 5.1)
 """
 
@@ -17,6 +17,8 @@ from ctypes import *
 import socket
 import struct
 import logging
+from multiprocessing import Pool
+
 
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -27,6 +29,63 @@ log = logging.getLogger(__file__)
 # tree_connect_andx_request
 # peeknamedpipe_request
 # trans2 request
+
+# convert an IP address from its dotted-quad format to its
+# 32 binary digit representation
+def ip2bin(ip):
+    b = ""
+    inQuads = ip.split(".")
+    outQuads = 4
+    for q in inQuads:
+        if q != "":
+            b += dec2bin(int(q),8)
+            outQuads -= 1
+    while outQuads > 0:
+        b += "00000000"
+        outQuads -= 1
+    return b
+
+# convert a decimal number to binary representation
+# if d is specified, left-pad the binary number with 0s to that length
+def dec2bin(n,d=None):
+    s = ""
+    while n>0:
+        if n&1:
+            s = "1"+s
+        else:
+            s = "0"+s
+        n >>= 1
+    if d is not None:
+        while len(s)<d:
+            s = "0"+s
+    if s == "": s = "0"
+    return s
+
+# convert a binary string into an IP address
+def bin2ip(b):
+    ip = ""
+    for i in range(0,len(b),8):
+        ip += str(int(b[i:i+8],2))+"."
+    return ip[:-1]
+
+# print a list of IP addresses based on the CIDR block specified
+def listCIDR(c):
+    cidrlist=[]
+    parts = c.split("/")
+    baseIP = ip2bin(parts[0])
+    subnet = int(parts[1])
+    # Python string-slicing weirdness:
+    # "myString"[:-1] -> "myStrin" but "myString"[:0] -> ""
+    # if a subnet of 32 was specified simply print the single IP
+    if subnet == 32:
+         bin2ip(baseIP)
+    # for any other size subnet, print a list of IP addresses by concatenating
+    # the prefix with each of the suffixes in the subnet
+    else:
+        ipPrefix = baseIP[:-(32-subnet)]
+        for i in range(2**(32-subnet)):
+            cidrlist.append(bin2ip(ipPrefix+dec2bin(i, (32-subnet))))
+        return cidrlist
 
 
 class SMB_HEADER(Structure):
@@ -405,24 +464,35 @@ def check(ip, port=445):
               log.info("Host is likely INFECTED with DoublePulsar! - XOR Key: {}".format(key))
 
         elif nt_status in ('\x08\x00\x00\xc0', '\x22\x00\x00\xc0'):
-            log.info("[-] [{}] does NOT appear vulnerable".format(ip))
+            pass
+            #log.info("[-] [{}] does NOT appear vulnerable".format(ip))
         else:
-            log.info("[-] [{}] Unable to detect if this host is vulnerable".format(ip))
+            pass
+            #log.info("[-] [{}] Unable to detect if this host is vulnerable".format(ip))
 
     except Exception as err:
-        log.error("[-] [{}] Exception: {}".format(ip, err))
+        pass
+        #log.error("[-] [{}] Exception: {}".format(ip, err))
     finally:
         client.close()
 
+def runcip(ip):
+    IPs = []
+    targetip = listCIDR(ip)
+    for i in range(len(targetip)):
+        IPs.append(targetip[i])
+    pool=Pool(10)
+    pool.map(check,IPs)
+    pool.close()
+    pool.join()
 
 if __name__ == '__main__':
     import sys
-
     if len(sys.argv) != 2:
         print("{} <ip>".format(sys.argv[0]))
         sys.exit(1)
     else:
-        check(sys.argv[1])
+        runcip(sys.argv[1])
 
 
 ## References
